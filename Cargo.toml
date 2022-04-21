@@ -1,0 +1,11 @@
+[package]
+name = "bio-seq-derive"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+syn = { version="1.0.91", features=["full"] }
+quote = "1.0.18"
+
+[lib]
+proc-macro = true
