@@ -8,8 +8,8 @@ description = "Derive macros for the bio-seq crate"
 license = "MIT"
 
 [dependencies]
-syn = { version="1.0.91", features=["full"] }
-quote = "1.0.18"
+syn = { version="1.0.99", features=["full"] }
+quote = "1.0.21"
 
 [lib]
 proc-macro = true
