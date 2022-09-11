@@ -4,7 +4,8 @@ use crate::proc_macro::TokenStream;
 
 use quote::quote;
 
-use syn::parse_macro_input;
+use syn::punctuated::Punctuated;
+use syn::{parse_macro_input, Token};
 
 struct WidthAttr {
     width: syn::LitInt,
@@ -43,19 +44,46 @@ impl syn::parse::Parse for AltAttr {
     }
 }
 
+/*
+struct AltDiscs {
+    byte: syn::ExprLit,
+}
+*/
+
+/*
+impl syn::parse::Parse for AltDiscs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let byte: syn::Lit = input.parse()?;
+        Ok(Self { byte: byte.value() })
+    }
+}
+*/
+
 fn codec_altrepr(attrs: &[syn::Attribute]) -> Option<char> {
     for attr in attrs {
-        if attr.path.is_ident("alt") {
+        if attr.path.is_ident("display") {
             return match syn::parse2::<AltAttr>(attr.tokens.clone()) {
                 Ok(c) => Some(c.chr.value()),
-                _ => panic!("expecting char in alt repr attribute"),
+                _ => panic!("expecting char in 'display' attribute"),
             };
         };
     }
     None
 }
 
-#[proc_macro_derive(Codec, attributes(width, alt))]
+fn codec_altdisc(attrs: &[syn::Attribute]) -> Option<Vec<syn::ExprLit>> {
+    for attr in attrs {
+        if attr.path.is_ident("alt") {
+            let discs: Punctuated<syn::ExprLit, Token![,]> =
+                attr.parse_args_with(Punctuated::parse_terminated).unwrap();
+            //            return Some(discs.iter().map(|b| b.byte).collect());
+            return Some(discs.iter().cloned().collect());
+        };
+    }
+    None
+}
+
+#[proc_macro_derive(Codec, attributes(width, display, alt))]
 pub fn codec_derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as syn::Item);
 
@@ -126,61 +154,95 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
                     },
                 }
             });
-            let bits_to_variant = variants.iter().map(|v| {
+
+            /*
+                        let bits_to_variant = variants.iter().map(|v| {
+                            let ident = &v.ident;
+                            let discriminant = &v.discriminant;
+
+                            match discriminant {
+                                Some((_, d)) => {
+                                    quote! { #d => Ok(Self::#ident) }
+                                }
+                                None => panic!(),
+                            }
+
+                        });
+            */
+            let mut altds = Vec::new();
+            let mut altds_unsafe = Vec::new();
+
+            for v in &variants {
                 let ident = &v.ident;
+
                 let discriminant = &v.discriminant;
 
                 match discriminant {
                     Some((_, d)) => {
-                        quote! { #d => Ok(Self::#ident) }
+                        altds.push(quote! { #d => Ok(Self::#ident) });
+                        altds_unsafe.push(quote! { #d => Self::#ident });
                     }
                     None => panic!(),
                 }
-            });
-            let unsafe_bit_variants = variants.iter().map(|v| {
-                let ident = &v.ident;
-                let discriminant = &v.discriminant;
 
-                match discriminant {
-                    Some((_, d)) => {
-                        quote! { #d => Self::#ident }
+                let alt_disc = codec_altdisc(&v.attrs);
+                match alt_disc {
+                    Some(ds) => {
+                        for d in ds {
+                            altds.push(quote! { #d => Ok(Self::#ident) });
+                            altds_unsafe.push(quote! { #d => Self::#ident });
+                        }
                     }
-                    None => panic!(),
+                    None => (),
                 }
-            });
+            }
+            /*
+                        let unsafe_bit_variants = variants.iter().map(|v| {
+                            let ident = &v.ident;
+                            let discriminant = &v.discriminant;
 
+                            match discriminant {
+                                Some((_, d)) => {
+                                    quote! { #d => Self::#ident }
+                                }
+                                None => panic!(),
+                            }
+                        });
+            */
             let output = quote! {
-                impl Codec for #ident {
-                    type Error = ParseBioErr;
-                    const WIDTH: u8 = #width;
-                    fn unsafe_from_bits(b: u8) -> Self {
-                        match b {
-                            #(#unsafe_bit_variants),*,
-                            _ => panic!(),
-                        }
-                    }
+                            impl Codec for #ident {
+                                type Error = ParseBioErr;
+                                const WIDTH: u8 = #width;
+                                fn unsafe_from_bits(b: u8) -> Self {
+                                    match b {
+             //                           #(#unsafe_bit_variants),*
+                                        #(#altds_unsafe),*,
+                                        _ => panic!(),
+                                    }
+                                }
 
-                    fn try_from_bits(b: u8) -> Result<Self, ParseBioErr> {
-                        match b {
-                            #(#bits_to_variant),*,
-                            _ => Err(ParseBioErr),
-                        }
-                    }
+                                fn try_from_bits(b: u8) -> Result<Self, ParseBioErr> {
+                                    match b {
+            //                            #(#bits_to_variant),*
+                                        #(#altds),*,
+                                        _ => Err(ParseBioErr),
+                                    }
+                                }
 
-                    fn from_char(c: char) -> Result<Self, ParseBioErr> {
-                        match c {
-                            #(#chars_to_variant),*,
-                            _ => Err(ParseBioErr),
-                        }
-                    }
+                                fn from_char(c: char) -> Result<Self, ParseBioErr> {
+                                    match c {
+                                        #(#chars_to_variant),*,
+                                        _ => Err(ParseBioErr),
+                                    }
+                                }
 
-                    fn to_char(self) -> char {
-                        match self {
-                            #(#variants_to_char),*,
-                        }
-                    }
-                }
-            };
+                                fn to_char(self) -> char {
+                                    match self {
+                                        #(#variants_to_char),*,
+                                    }
+                                }
+                            }
+                        };
             output.into()
         }
         _ => panic!("not enum"),
