@@ -88,15 +88,18 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
     let width: u8 = codec_width(&e.attrs);
 
     let mut max_variant = 0u64;
+    let mut variant_idents = Vec::new();
 
-    let mut variant_idents = vec![];
+    let mut variants_to_char = Vec::new();
+    let mut chars_to_variant = Vec::new();
+    let mut alt_discriminants = Vec::new();
+    let mut unsafe_alts = Vec::new();
 
     // Test that the maximum discriminant is less than the greatest amount
     // supported by the bitwidth and collect the list of identifiers.
-    for v in variants.iter() {
-        //let ident = &v.ident;
-        variant_idents.push(v.ident.clone());
-        let discriminant = &v.discriminant;
+    for variant in variants.iter() {
+        variant_idents.push(variant.ident.clone());
+        let discriminant = &variant.discriminant;
 
         if let Some((_, syn::Expr::Lit(expr_lit))) = discriminant {
             let value = match &expr_lit.lit {
@@ -104,7 +107,7 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
                 syn::Lit::Int(lit_int) => lit_int.base10_parse::<u64>().unwrap(),
                 _ => {
                     return syn::Error::new_spanned(
-                        &v.ident,
+                        &variant.ident,
                         "Codec derivations require byte or integer discriminants",
                     )
                     .to_compile_error()
@@ -114,26 +117,15 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
 
             max_variant = max_variant.max(value);
         } else {
-            return syn::Error::new_spanned(&v.ident, "Codec derivations require discriminants")
-                .to_compile_error()
-                .into();
-        }
-    }
-
-    if max_variant >= u64::pow(2, width as u32) {
-        return syn::Error::new_spanned(ident, "Codec specifier does not fit inside bit width")
+            return syn::Error::new_spanned(
+                &variant.ident,
+                "Codec derivations require discriminants",
+            )
             .to_compile_error()
             .into();
-    }
+        }
 
-    let mut variants_to_char = Vec::new();
-    let mut chars_to_variant = Vec::new();
-    let mut alt_discriminants = Vec::new();
-    let mut unsafe_alts = Vec::new();
-
-    for variant in variants.iter() {
         let ident = &variant.ident;
-        let discriminant = &variant.discriminant;
 
         let alt_char = codec_altrepr(&variant.attrs);
         let char_repr = alt_char.unwrap_or_else(|| ident.to_string().chars().next().unwrap());
@@ -156,6 +148,12 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
                 unsafe_alts.push(quote! { #d => Self::#ident });
             }
         }
+    }
+
+    if max_variant >= u64::pow(2, width as u32) {
+        return syn::Error::new_spanned(ident, "Codec specifier does not fit inside bit width")
+            .to_compile_error()
+            .into();
     }
 
     // Generate the implementation
