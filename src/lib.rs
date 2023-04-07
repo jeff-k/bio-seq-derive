@@ -126,74 +126,34 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
             .into();
     }
 
-    // Collect the mappings of variants to character representations
-    let variants_to_char = variants.iter().map(|v| {
-        let ident = &v.ident;
-        let discriminant = &v.discriminant;
+    let mut variants_to_char = Vec::new();
+    let mut chars_to_variant = Vec::new();
+    let mut alt_discriminants = Vec::new();
+    let mut unsafe_alts = Vec::new();
 
-        let alt_char = codec_altrepr(&v.attrs);
+    for variant in variants.iter() {
+        let ident = &variant.ident;
+        let discriminant = &variant.discriminant;
 
-        match alt_char {
-            Some(alt) => quote! { Self::#ident => #alt },
-            None => match discriminant {
-                Some(_d) => {
-                    let char_repr: char = ident.to_string().chars().next().unwrap();
-                    quote! { Self::#ident => #char_repr }
-                }
-                None => {
-                    syn::Error::new_spanned(ident, "Could not parse alternative representation")
-                        .to_compile_error()
-                }
-            },
-        }
-    });
+        let alt_char = codec_altrepr(&variant.attrs);
+        let char_repr = alt_char.unwrap_or_else(|| ident.to_string().chars().next().unwrap());
 
-    // Collect the mappings of character representations to variants
-    let chars_to_variant = variants.iter().map(|v| {
-        let ident = &v.ident;
-        let discriminant = &v.discriminant;
-
-        let alt_char = codec_altrepr(&v.attrs);
-
-        match alt_char {
-            Some(alt) => quote! { #alt => Ok(Self::#ident) },
-            None => match discriminant {
-                Some(_d) => {
-                    let char_repr: char = ident.to_string().chars().next().unwrap();
-                    quote! { #char_repr => Ok(Self::#ident) }
-                }
-                None => {
-                    syn::Error::new_spanned(ident, "Could not parse alternative representation")
-                        .to_compile_error()
-                }
-            },
-        }
-    });
-
-    // Handle alternative discriminants. This is for cases like the 6-bit
-    // Amino acid alphabet, where for convenience we can have multiple
-    // bit representations to construct a variant.
-    let mut altds = Vec::new();
-    let mut altds_unsafe = Vec::new();
-
-    for v in &variants {
-        let ident = &v.ident;
-
-        let discriminant = &v.discriminant;
+        variants_to_char.push(quote! { Self::#ident => #char_repr });
+        chars_to_variant.push(quote! { #char_repr => Ok(Self::#ident) });
 
         match discriminant {
             Some((_, d)) => {
-                altds.push(quote! { #d => Ok(Self::#ident) });
-                altds_unsafe.push(quote! { #d => Self::#ident });
+                alt_discriminants.push(quote! { #d => Ok(Self::#ident) });
+                unsafe_alts.push(quote! { #d => Self::#ident });
             }
             None => panic!(),
         }
 
-        let alt_disc = codec_altdisc(&v.attrs);
+        let alt_disc = codec_altdisc(&variant.attrs);
         if let Some(ds) = alt_disc {
             for d in ds {
-                altds.push(quote! { #d => Ok(Self::#ident) });
-                altds_unsafe.push(quote! { #d => Self::#ident });
+                alt_discriminants.push(quote! { #d => Ok(Self::#ident) });
+                unsafe_alts.push(quote! { #d => Self::#ident });
             }
         }
     }
@@ -205,14 +165,14 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
             const WIDTH: u8 = #width;
             fn unsafe_from_bits(b: u8) -> Self {
                 match b {
-                    #(#altds_unsafe),*,
+                    #(#unsafe_alts),*,
                     _ => panic!(),
                 }
             }
 
             fn try_from_bits(b: u8) -> Result<Self, ParseBioErr> {
                 match b {
-                    #(#altds),*,
+                    #(#alt_discriminants),*,
                     _ => Err(ParseBioErr),
                 }
             }
