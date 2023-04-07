@@ -1,3 +1,8 @@
+// Copyright 2023 Jeff Knaggs
+// Licensed under the MIT license (http://opensource.org/licenses/MIT)
+// This file may not be copied, modified, or distributed
+// except according to those terms.
+
 extern crate proc_macro;
 
 use crate::proc_macro::TokenStream;
@@ -113,29 +118,26 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
         chars_to_variant.push(quote! { #char_repr => Ok(Self::#ident) });
     }
 
-    // TODO: we should be able to use the best fitting width if we know the max
-    // value of the variants, ceil(log2(max_variant)). This should be carefully
-    // tested.
-    //
-    //    let mut width = max_variant.ilog2();
-
-    let mut width = 8; // default width
+    // default width is the log2 of the max_variant
+    let mut width = f32::ceil(f32::log2(max_variant as f32)) as u8;
     for attr in &enum_ast.attrs {
         if attr.path.is_ident("width") {
             width = match syn::parse2::<WidthAttr>(attr.tokens.clone()) {
-                Ok(w) => w.width.base10_parse::<u8>().unwrap(),
+                Ok(w) => {
+                    let x = w.width.base10_parse::<u8>().unwrap();
+                    if x < width {
+                        return syn::Error::new_spanned(
+                            attr,
+                            "Width is not large enough to support the bit representations",
+                        )
+                        .to_compile_error()
+                        .into();
+                    }
+                    x
+                }
                 Err(err) => return err.to_compile_error().into(),
             }
         };
-    }
-
-    if max_variant >= u8::pow(2, width as u32) {
-        return syn::Error::new_spanned(
-            enum_ident,
-            "Codec specifier does not fit inside bit width",
-        )
-        .to_compile_error()
-        .into();
     }
 
     // Generate the implementation
