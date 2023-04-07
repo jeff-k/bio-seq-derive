@@ -44,21 +44,7 @@ impl syn::parse::Parse for AltAttr {
     }
 }
 
-/*
-struct AltDiscs {
-    byte: syn::ExprLit,
-}
-*/
-
-/*
-impl syn::parse::Parse for AltDiscs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let byte: syn::Lit = input.parse()?;
-        Ok(Self { byte: byte.value() })
-    }
-}
-*/
-
+/// Parse alternative representations
 fn codec_altrepr(attrs: &[syn::Attribute]) -> Option<char> {
     for attr in attrs {
         if attr.path.is_ident("display") {
@@ -71,12 +57,12 @@ fn codec_altrepr(attrs: &[syn::Attribute]) -> Option<char> {
     None
 }
 
+/// Parse alternative discriminants
 fn codec_altdisc(attrs: &[syn::Attribute]) -> Option<Vec<syn::ExprLit>> {
     for attr in attrs {
         if attr.path.is_ident("alt") {
             let discs: Punctuated<syn::ExprLit, Token![,]> =
                 attr.parse_args_with(Punctuated::parse_terminated).unwrap();
-            //            return Some(discs.iter().map(|b| b.byte).collect());
             return Some(discs.iter().cloned().collect());
         };
     }
@@ -87,6 +73,7 @@ fn codec_altdisc(attrs: &[syn::Attribute]) -> Option<Vec<syn::ExprLit>> {
 pub fn codec_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::Item);
 
+    // Basic test for correct usage
     let e = match input {
         syn::Item::Enum(e) => e,
         _ => {
@@ -103,20 +90,28 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
     let mut max_variant = 0u64;
 
     let mut variant_idents = vec![];
+
+    // Test that the maximum discriminant is less than the greatest amount
+    // supported by the bitwidth and collect the list of identifiers.
     for v in variants.iter() {
         //let ident = &v.ident;
         variant_idents.push(v.ident.clone());
         let discriminant = &v.discriminant;
 
-        if let Some((
-            _,
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Byte(lit_byte),
-                ..
-            }),
-        )) = discriminant
-        {
-            let value = lit_byte.value() as u64;
+        if let Some((_, syn::Expr::Lit(expr_lit))) = discriminant {
+            let value = match &expr_lit.lit {
+                syn::Lit::Byte(lit_byte) => lit_byte.value() as u64,
+                syn::Lit::Int(lit_int) => lit_int.base10_parse::<u64>().unwrap(),
+                _ => {
+                    return syn::Error::new_spanned(
+                        &v.ident,
+                        "Codec derivations require byte or integer discriminants",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+            };
+
             max_variant = max_variant.max(value);
         } else {
             return syn::Error::new_spanned(&v.ident, "Codec derivations require discriminants")
@@ -131,6 +126,7 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
             .into();
     }
 
+    // Collect the mappings of variants to character representations
     let variants_to_char = variants.iter().map(|v| {
         let ident = &v.ident;
         let discriminant = &v.discriminant;
@@ -145,16 +141,14 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
                     quote! { Self::#ident => #char_repr }
                 }
                 None => {
-                    return syn::Error::new_spanned(
-                        ident,
-                        "Could not parse alternative representation",
-                    )
-                    .to_compile_error()
-                    .into()
+                    syn::Error::new_spanned(ident, "Could not parse alternative representation")
+                        .to_compile_error()
                 }
             },
         }
     });
+
+    // Collect the mappings of character representations to variants
     let chars_to_variant = variants.iter().map(|v| {
         let ident = &v.ident;
         let discriminant = &v.discriminant;
@@ -169,17 +163,16 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
                     quote! { #char_repr => Ok(Self::#ident) }
                 }
                 None => {
-                    return syn::Error::new_spanned(
-                        ident,
-                        "Could not parse alternative representation",
-                    )
-                    .to_compile_error()
-                    .into()
+                    syn::Error::new_spanned(ident, "Could not parse alternative representation")
+                        .to_compile_error()
                 }
             },
         }
     });
 
+    // Handle alternative discriminants. This is for cases like the 6-bit
+    // Amino acid alphabet, where for convenience we can have multiple
+    // bit representations to construct a variant.
     let mut altds = Vec::new();
     let mut altds_unsafe = Vec::new();
 
@@ -197,17 +190,15 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
         }
 
         let alt_disc = codec_altdisc(&v.attrs);
-        match alt_disc {
-            Some(ds) => {
-                for d in ds {
-                    altds.push(quote! { #d => Ok(Self::#ident) });
-                    altds_unsafe.push(quote! { #d => Self::#ident });
-                }
+        if let Some(ds) = alt_disc {
+            for d in ds {
+                altds.push(quote! { #d => Ok(Self::#ident) });
+                altds_unsafe.push(quote! { #d => Self::#ident });
             }
-            None => (),
         }
     }
 
+    // Generate the implementation
     let output = quote! {
         impl Codec for #ident {
             type Error = ParseBioErr;
