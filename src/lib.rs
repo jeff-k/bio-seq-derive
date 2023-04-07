@@ -3,6 +3,10 @@
 // This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! `bio-seq-derive` is a procedural macro crate that provides the `Codec` derive macro for the `bio-seq` library.
+//! It allows users to define custom bit-packed encodings from an enum. The representation of the enum is derived from the discriminants.
+//! Please refer to the `bio-seq` [documentation](https://github.com/jeff-k/bio-seq) for a complete guide on defining custom alphabets.
+
 extern crate proc_macro;
 
 use crate::proc_macro::TokenStream;
@@ -12,11 +16,11 @@ use quote::quote;
 use syn::punctuated::Punctuated;
 use syn::{parse_macro_input, Token};
 
+/// The width attribute should take the form #[width = 2]
 struct WidthAttr {
     width: syn::LitInt,
 }
 
-/// The width attribute should take the form #[width = 2]
 impl syn::parse::Parse for WidthAttr {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let _: syn::Token![=] = input.parse()?;
@@ -25,11 +29,11 @@ impl syn::parse::Parse for WidthAttr {
     }
 }
 
+/// Alternate representation attributes look like #[alt(0b00, 0b11)]
 struct AltAttr {
     chr: syn::LitChar,
 }
 
-/// Alternate representation attributes look like #[alt(0b00, 0b11)]
 impl syn::parse::Parse for AltAttr {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let _: syn::Token![=] = input.parse()?;
@@ -69,6 +73,7 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
 
         if let Some((_, syn::Expr::Lit(expr_lit))) = discriminant {
             let value = match &expr_lit.lit {
+                // discriminants must be either integers or byte literals
                 syn::Lit::Byte(lit_byte) => lit_byte.value(),
                 syn::Lit::Int(lit_int) => lit_int.base10_parse::<u8>().unwrap(),
                 _ => {
@@ -124,16 +129,17 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
         if attr.path.is_ident("width") {
             width = match syn::parse2::<WidthAttr>(attr.tokens.clone()) {
                 Ok(w) => {
-                    let x = w.width.base10_parse::<u8>().unwrap();
-                    if x < width {
+                    let chosen_width = w.width.base10_parse::<u8>().unwrap();
+                    // test whether the specified width is too small
+                    if chosen_width < width {
                         return syn::Error::new_spanned(
                             attr,
-                            "Width is not large enough to support the bit representations",
+                            format!("Width is not large enough encode all variants (max: {width})"),
                         )
                         .to_compile_error()
                         .into();
                     }
-                    x
+                    chosen_width
                 }
                 Err(err) => return err.to_compile_error().into(),
             }
