@@ -125,6 +125,7 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
 
     // default width is the log2 of the max_variant
     let mut width = f32::ceil(f32::log2(max_variant as f32)) as u8;
+
     for attr in &enum_ast.attrs {
         if attr.path.is_ident("width") {
             width = match syn::parse2::<WidthAttr>(attr.tokens.clone()) {
@@ -146,10 +147,12 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
         };
     }
 
+    let parse_error = quote! { crate::ParseBioError };
+
     // Generate the implementation
     let output = quote! {
         impl Codec for #enum_ident {
-            type Error = ParseBioErr;
+            type Error = #parse_error;
             const WIDTH: u8 = #width;
             fn unsafe_from_bits(b: u8) -> Self {
                 match b {
@@ -158,17 +161,17 @@ pub fn codec_derive(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn try_from_bits(b: u8) -> Result<Self, ParseBioErr> {
+            fn try_from_bits(b: u8) -> Result<Self, Self::Error> {
                 match b {
                     #(#alt_discriminants),*,
-                    _ => Err(ParseBioErr),
+                    _ => Err(#parse_error {}),
                 }
             }
 
-            fn from_char(c: char) -> Result<Self, ParseBioErr> {
+            fn from_char(c: char) -> Result<Self, Self::Error> {
                 match c {
                     #(#chars_to_variant),*,
-                    _ => Err(ParseBioErr),
+                    _ => Err(#parse_error {}),
                 }
             }
 
