@@ -1,3 +1,7 @@
+## This crate is now hosted as a workspace in the [bio-seq](https://github.com/jeff-k/bio-seq) repo: [https://github.com/jeff-k/bio-seq/bio-seq-derive](https://github.com/jeff-k/bio-seq/tree/main/bio-seq-derive)
+
+### This repo will be archived
+
 # bio-seq-derive
 
 `bio-seq-derive` is a procedural macro crate that provides the `Codec` derive macro for the `bio-seq` library. It allows users to define custom bit-packed alphabets from an enum. The bit representation of the enum is derived from the discriminants.
